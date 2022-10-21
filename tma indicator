@@ -1,0 +1,756 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+//@version=5
+indicator('TMA Reversal Channel by Milad Hamid v1.2', overlay=true)//, max_bars_back=1000, max_lines_count=400, max_labels_count=400,process_orders_on_close=true, initial_capital=100000, commission_type=strategy.commission.percent, commission_value=.0)
+disable_em1 = input.bool(true, 'Show EMA', group='Display Setting')
+engulf = input.bool(false, 'Show Engulfing', group='Display Setting')
+rf = input.bool(true, 'Show Range Filter', group='Display Setting')
+dd = input.bool(false, 'Show Double/top bottom', group='Display Setting')
+sr_r=input.bool(true, 'Show S/R', group='Indicator')
+srtr = input(true, 'Show Resistance Trend Line(Red)',group="Display Setting")
+sstr = input(true, 'Show Support Trend Line(Green)',group="Display Setting")
+satr = input(false, 'Show Average Trend Line(Yellow)',group="Display Setting")
+rltr = input(true, 'Show Reference Lines Trend Line',group="Display Setting")
+crtr = input(false, 'Show Criss-cross Trend Line',group="Display Setting")
+tltr = input(false, 'Show Trace Lines Trend Line',group="Display Setting")
+exptr = input(true, 'Set logarithmic Trend Line',group="Display Setting")
+
+//////////////////////////////////////////////////Range Filter{
+
+src_rf = input(defval=close, title='Source',group="Range Filter")
+
+// Sampling Period
+// Settings for 5min chart, BTCUSDC. For Other coin, change the paremeters
+
+per = input.int(defval=100, minval=1, title='Sampling Period',group="Range Filter")
+
+// Range Multiplier
+
+mult = input.float(defval=3.0, minval=0.1, title='Range Multiplier',group="Range Filter")
+
+// Smooth Average Range
+
+smoothrng(x, t, m) =>
+    wper = t * 2 - 1
+    avrng = ta.ema(math.abs(x - x[1]), t)
+    smoothrng = ta.ema(avrng, wper) * m
+    smoothrng
+smrng = smoothrng(src_rf, per, mult)
+
+// Range Filter
+
+rngfilt(x, r) =>
+    rngfilt = x
+    rngfilt := x > nz(rngfilt[1]) ? x - r < nz(rngfilt[1]) ? nz(rngfilt[1]) : x - r : x + r > nz(rngfilt[1]) ? nz(rngfilt[1]) : x + r
+    rngfilt
+filt = rngfilt(src_rf, smrng)
+
+// Filter Direction
+
+upward = 0.0
+upward := filt > filt[1] ? nz(upward[1]) + 1 : filt < filt[1] ? 0 : nz(upward[1])
+downward = 0.0
+downward := filt < filt[1] ? nz(downward[1]) + 1 : filt > filt[1] ? 0 : nz(downward[1])
+
+// Target Bands
+
+hband = filt + smrng
+lband = filt - smrng
+
+// Colors
+
+filtcolor = upward > 0 ? color.lime : downward > 0 ? color.red : color.orange
+barcolor = src_rf > filt and src_rf > src_rf[1] and upward > 0 ? color.lime : src_rf > filt and src_rf < src_rf[1] and upward > 0 ? color.green : src_rf < filt and src_rf < src_rf[1] and downward > 0 ? color.red : src_rf < filt and src_rf> src_rf[1] and downward > 0 ? color.maroon : color.orange
+
+filtplot = plot(rf?filt:na, color=filtcolor, linewidth=3, title='Range Filter')
+
+// Target
+
+hbandplot = plot(rf?hband:na, color=color.new(color.aqua, 100), title='High Target')
+lbandplot = plot(rf?lband:na, color=color.new(color.fuchsia, 100), title='Low Target')
+
+// Fills
+
+fill(hbandplot, filtplot, color=color.new(color.aqua, 90), title='High Target Range')
+fill(lbandplot, filtplot, color=color.new(color.fuchsia, 90), title='Low Target Range')
+
+// Break Outs
+
+longCond = bool(na)
+shortCond = bool(na)
+longCond := src_rf > filt and src_rf > src_rf[1] and upward > 0 or src_rf > filt and src_rf < src_rf[1] and upward > 0
+shortCond := src_rf < filt and src_rf < src_rf[1] and downward > 0 or src_rf < filt and src_rf > src_rf[1] and downward > 0
+
+CondIni = 0
+CondIni := longCond ? 1 : shortCond ? -1 : CondIni[1]
+longCondition = longCond and CondIni[1] == -1
+shortCondition = shortCond and CondIni[1] == 1
+
+//Alerts
+
+plotshape(rf?longCondition:na, title='Buy Signal', text='BUY', textcolor=color.new(color.white, 0), style=shape.labelup, size=size.normal, location=location.belowbar, color=color.new(color.green, 0))
+plotshape(rf?shortCondition:na, title='Sell Signal', text='SELL', textcolor=color.new(color.white, 0), style=shape.labeldown, size=size.normal, location=location.abovebar, color=color.new(color.red, 0))
+
+alertcondition(longCondition, title='Range Filter Buy Alert', message='Range Filter BUY')
+alertcondition(shortCondition, title='Range Filter Sell Alert', message='Range Filter SELL')
+
+    
+//}
+
+//////////////////////////////////////////////////Support/resistance{
+src = input.string(defval='High/Low', title='Source', options=['High/Low', 'Close/Open'],group="S/R")
+TimeframeU = input.string(defval='240', title='Higher Time Frame', options=['Auto', '15', '30', '60', '120', '180', '240', '720', 'D', 'W', '2W', 'M', '3M', '6M', '12M'],group="S/R")
+prd = input.int(defval=10, title='Period for Highest/Lowest Bars', minval=1,group="S/R")
+resistancecol = input(defval=color.red, title='Resistance Color',group="S/R")
+supportcol = input(defval=color.lime, title='Support Color',group="S/R")
+Transp = input.int(defval=80, title='Transparency for Zones', minval=0, maxval=100,group="S/R")
+extendlines = input(defval=false, title='Extend Lines',group="S/R")
+
+Timeframe = timeframe.period
+if TimeframeU == 'Auto'
+    Timeframe := timeframe.period == '1' ? '15' : timeframe.period == '3' ? '15' : timeframe.period == '5' ? '60' : timeframe.period == '15' ? '60' : timeframe.period == '30' ? '120' : timeframe.period == '45' ? '120' : timeframe.period == '60' ? '240' : timeframe.period == '120' ? 'D' : timeframe.period == '180' ? 'D' : timeframe.period == '240' ? 'D' : timeframe.period == 'D' ? 'W' : timeframe.period == 'W' ? 'M' : '12M'
+    Timeframe
+else
+    Timeframe := TimeframeU
+    Timeframe
+
+var float hc = na
+var float lc = na
+srch = src == 'High/Low' ? high : math.max(close, open)
+srcl = src == 'High/Low' ? low : math.min(close, open)
+hc := ta.highestbars(srch, prd) == 0 ? srch : hc
+lc := ta.lowestbars(srcl, prd) == 0 ? srcl : lc
+
+hcp = plot(hc, color=hc == hc[1] ? resistancecol : na)
+lcp = plot(lc, color=lc == lc[1] ? supportcol : na)
+
+bool newbar = ta.change(time(Timeframe)) != 0
+var float htfh = na
+var float htfl = na
+if newbar
+    htfh := srch
+    htfl := srcl
+    htfl
+else
+    htfh := math.max(htfh, srch)
+    htfl := math.min(htfl, srcl)
+    htfl
+
+highestbar(src, len) =>
+    ll = 1
+    if len > 1
+        for x = 0 to 4000 by 1
+            if na(newbar[x]) or na(close[x + 1])
+                break
+            if newbar[x]
+                if src <= src[x + 1]
+                    break
+                ll += 1
+                if ll >= len
+                    break
+    ret = ll >= len
+    ret
+
+lowestbar(src, len) =>
+    ll = 1
+    if len > 1
+        for x = 0 to 4000 by 1
+            if na(newbar[x]) or na(close[x + 1])
+                break
+            if newbar[x]
+                if src >= src[x + 1]
+                    break
+                ll += 1
+                if ll >= len
+                    break
+    ret = ll >= len
+    ret
+
+var float hh = 0
+var float ll = 0
+bool hbar = highestbar(htfh, prd)
+bool lbar = lowestbar(htfl, prd)
+hh := hbar ? htfh : hh
+ll := lbar ? htfl : ll
+
+hhp = plot(sr_r?hh:na, color=hh == hh[1] ? resistancecol : na)
+llp = plot(sr_r?ll:na, color=ll == ll[1] ? supportcol : na)
+
+// extend lines
+if extendlines and sr_r
+    var line s1 = na
+    var line s2 = na
+    var line r1 = na
+    var line r2 = na
+    line.delete(s1)
+    line.delete(s2)
+    line.delete(r1)
+    line.delete(r2)
+    s1 := line.new(bar_index, lc, bar_index - 1, lc, color=supportcol, extend=extend.left)
+    s2 := line.new(bar_index, ll, bar_index - 1, ll, color=supportcol, extend=extend.left)
+    r1 := line.new(bar_index, hc, bar_index - 1, hc, color=resistancecol, extend=extend.left)
+    r2 := line.new(bar_index, hh, bar_index - 1, hh, color=resistancecol, extend=extend.left)
+//}
+
+//////////////////////////////////////////////////EMA{
+len1 = input.int(350, minval=1, title="Length",group="EMA #1")
+resu=input.timeframe("240","Timeframe",group="EMA #1")
+src1 = input(close, title="Source",group="EMA #1")
+offset1 = input.int(title="Offset", defval=0, minval=-500, maxval=500,group="EMA #1")
+out1 = request.security(syminfo.tickerid,resu, ta.ema(src1, len1))
+plot(disable_em1?out1:na, title="EMA", color=color.yellow, offset=offset1,linewidth=2)
+//}
+
+//////////////////////////////////////////////////TMA band{
+
+TMAPeriodBack = input(defval=35, title='TMA number of bars back',group="TMA bands")
+ATRPeriodBack = input(defval=75, title='ATR number of bars back',group="TMA bands")
+ATRMultiplier = input(defval=4.0, title='ATR Multiplier',group="TMA bands")
+src_tm = input(close, title='Price',group="TMA bands")
+
+ssi = ta.wma(src_tm, TMAPeriodBack)
+tma = ta.swma(ssi)
+range_1 = ta.atr(ATRPeriodBack) * ATRMultiplier
+tmaht = tma + range_1
+tmalt = tma - range_1
+///2
+
+TMAPeriodBackt2 = input(defval=35, title='TMA number of bars back',group="TMA bands 2")
+ATRPeriodBackt2 = input(defval=75, title='ATR number of bars back',group="TMA bands 2")
+ATRMultipliert2 = input(defval=5.0, title='ATR Multiplier',group="TMA bands 2")
+src_tmt2= input(close, title='Price',group="TMA bands 2")
+
+ssit2 = ta.wma(src_tmt2, TMAPeriodBackt2)
+tmat2 = ta.swma(ssit2)
+range_1t2 = ta.atr(ATRPeriodBackt2) * ATRMultipliert2
+tmaht2 = tmat2 + range_1t2
+tmalt2 = tmat2 - range_1t2
+
+
+//////3
+
+TMAPeriodBackt3 = input(defval=35, title='TMA number of bars back',group="TMA bands 3")
+ATRPeriodBackt3 = input(defval=75, title='ATR number of bars back',group="TMA bands 3")
+ATRMultipliert3 = input(defval=6.0, title='ATR Multiplier',group="TMA bands 3")
+src_tmt3 = input(close, title='Price',group="TMA bands 3")
+
+ssit3 = ta.wma(src_tmt3, TMAPeriodBackt3)
+tmat3 = ta.swma(ssit3)
+range_1t3 = ta.atr(ATRPeriodBackt3) * ATRMultipliert3
+tmaht3 = tmat3 + range_1t3
+tmalt3 = tmat3 - range_1t3
+
+plot(tmaht3, color=color.new(color.red, 40), linewidth=2, title='Upper3')
+plot(tmalt3, color=color.new(color.blue, 40), linewidth=2, title='Lower3')
+
+plot(tmaht, color=color.new(color.red, 40), linewidth=1, title='Upper')
+plot(tma, color=color.new(color.gray, 40), linewidth=1, title='Middle')
+plot(tmalt, color=color.new(color.blue, 40), linewidth=1, title='Lower')
+
+plot(tmaht2, color=color.new(color.red, 40), linewidth=1, title='Upper2')
+plot(tmalt2, color=color.new(color.blue, 40), linewidth=1, title='Lower2')
+
+
+//}
+
+//////////////////////////////////////////////////Engulfing pattern{
+
+C_DownTrend = true
+C_UpTrend = true
+var trendRule1 = "SMA50"
+var trendRule2 = "SMA50, SMA200"
+var trendRule = input.string(trendRule1, "Detect Trend Based On", options=[trendRule1, trendRule2, "No detection"])
+
+if trendRule == trendRule1
+	priceAvg = ta.sma(close, 50)
+	C_DownTrend := close < priceAvg
+	C_UpTrend := close > priceAvg
+
+if trendRule == trendRule2
+	sma200 = ta.sma(close, 200)
+	sma50 = ta.sma(close, 50)
+	C_DownTrend := close < sma50 and sma50 < sma200
+	C_UpTrend := close > sma50 and sma50 > sma200
+C_Len = 14 // ta.ema depth for bodyAvg
+C_ShadowPercent = 5.0 // size of shadows
+C_ShadowEqualsPercent = 100.0
+C_DojiBodyPercent = 5.0
+C_Factor = 2.0 // shows the number of times the shadow dominates the candlestick body
+
+C_BodyHi = math.max(close, open)
+C_BodyLo = math.min(close, open)
+C_Body = C_BodyHi - C_BodyLo
+C_BodyAvg = ta.ema(C_Body, C_Len)
+C_SmallBody = C_Body < C_BodyAvg
+C_LongBody = C_Body > C_BodyAvg
+C_UpShadow = high - C_BodyHi
+C_DnShadow = C_BodyLo - low
+C_HasUpShadow = C_UpShadow > C_ShadowPercent / 100 * C_Body
+C_HasDnShadow = C_DnShadow > C_ShadowPercent / 100 * C_Body
+C_WhiteBody = open < close
+C_BlackBody = open > close
+C_Range = high-low
+C_IsInsideBar = C_BodyHi[1] > C_BodyHi and C_BodyLo[1] < C_BodyLo
+C_BodyMiddle = C_Body / 2 + C_BodyLo
+C_ShadowEquals = C_UpShadow == C_DnShadow or (math.abs(C_UpShadow - C_DnShadow) / C_DnShadow * 100) < C_ShadowEqualsPercent and (math.abs(C_DnShadow - C_UpShadow) / C_UpShadow * 100) < C_ShadowEqualsPercent
+C_IsDojiBody = C_Range > 0 and C_Body <= C_Range * C_DojiBodyPercent / 100
+C_Doji = C_IsDojiBody and C_ShadowEquals
+
+patternLabelPosLow = low - (ta.atr(30) * 0.6)
+patternLabelPosHigh = high + (ta.atr(30) * 0.6)
+
+label_color_bearish = input(color.red, "Label Color Bearish")
+C_EngulfingBearishNumberOfCandles = 2
+C_EngulfingBearish = C_UpTrend and C_BlackBody and C_LongBody and C_WhiteBody[1] and C_SmallBody[1] and close <= open[1] and open >= close[1] and ( close < open[1] or open > close[1] )
+// alertcondition(C_EngulfingBearish, title = "New pattern detected", message = "New Engulfing - Bearish pattern detected")
+
+if C_EngulfingBearish and engulf
+    var ttBearishEngulfing = "Engulfing\nAt the end of a given uptrend, a reversal pattern will most likely appear. During the first day, this candlestick pattern uses a small body. It is then followed by a day where the candle body fully overtakes the body from the day before it and closes in the trend's opposite direction. Although similar to the outside reversal chart pattern, it is not essential for this pattern to fully overtake the range (high to low), rather only the open and the close."
+    label.new(bar_index, patternLabelPosHigh, text="BE", style=label.style_label_down, color = label_color_bearish, textcolor=color.white, tooltip = ttBearishEngulfing, size=size.small)
+
+label_color_bullish = input(color.blue, "Label Color Bullish")
+C_EngulfingBullishNumberOfCandles = 2
+C_EngulfingBullish = C_DownTrend and C_WhiteBody and C_LongBody and C_BlackBody[1] and C_SmallBody[1] and close >= open[1] and open <= close[1] and ( close > open[1] or open < close[1] )
+// alertcondition(C_EngulfingBullish, title = "New pattern detected", message = "New Engulfing - Bullish pattern detected")
+if C_EngulfingBullish and engulf
+    var ttBullishEngulfing = "Engulfing\nAt the end of a given downward trend, there will most likely be a reversal pattern. To distinguish the first day, this candlestick pattern uses a small body, followed by a day where the candle body fully overtakes the body from the day before, and closes in the trend's opposite direction. Although similar to the outside reversal chart pattern, it is not essential for this pattern to completely overtake the range (high to low), rather only the open and the close."
+    label.new(bar_index, patternLabelPosLow, text="BE", style=label.style_label_up, color = label_color_bullish, textcolor=color.white, tooltip = ttBullishEngulfing, size=size.small)
+/////////////////////////////////////////////////}
+
+//////////////////////////////////////////////////Double Top/bottom{
+
+length = input.int(10, step=5, minval=5,group="Double Top/bottom")
+showZigzag = input(false,group="Double Top/bottom")
+showPivots = input(false,group="Double Top/bottom")
+showStats = input(false,group="Double Top/bottom")
+bullishColor = input(color.green,group="Double Top/bottom")
+bullTrapColor = input(color.orange,group="Double Top/bottom")
+bearishColor = input(color.red,group="Double Top/bottom")
+bearTrapColor = input(color.lime,group="Double Top/bottom")
+textColor = input(color.black,group="Double Top/bottom")
+
+MaxRiskPerReward = input.int(30, step=5, minval=5, maxval=100,group="Double Top/bottom")
+DisplayRiskPerReward = input(false,group="Double Top/bottom")
+var zigzagvalues = array.new_float(0)
+var zigzagindexes = array.new_int(0)
+var zigzagdir = array.new_int(0)
+
+var doubleTopBottomValues = array.new_float(3)
+var doubleTopBottomIndexes = array.new_int(3)
+var doubleTopBottomDir = array.new_int(3)
+
+int max_array_size = 10
+max_bars_back(high, 1000)
+max_bars_back(low, 1000)
+
+var lineArray = array.new_line(0)
+var labelArray = array.new_label(0)
+pivots(length) =>
+    float ph = ta.highestbars(high, length) == 0 ? high : na
+    float pl = ta.lowestbars(low, length) == 0 ? low : na
+    dir = 0
+    iff_1 = pl and na(ph) ? -1 : dir[1]
+    dir := ph and na(pl) ? 1 : iff_1
+    [dir, ph, pl]
+
+add_to_array(value, index, dir) =>
+    mult = array.size(zigzagvalues) < 2 ? 1 : dir * value > dir * array.get(zigzagvalues, 1) ? 2 : 1
+    array.unshift(zigzagindexes, index)
+    array.unshift(zigzagvalues, value)
+    array.unshift(zigzagdir, dir * mult)
+    if array.size(zigzagindexes) > max_array_size
+        array.pop(zigzagindexes)
+        array.pop(zigzagvalues)
+        array.pop(zigzagdir)
+
+add_to_zigzag(dir, dirchanged, ph, pl, index) =>
+    value = dir == 1 ? ph : pl
+    if array.size(zigzagvalues) == 0 or dirchanged
+        add_to_array(value, index, dir)
+    else if dir == 1 and value > array.get(zigzagvalues, 0) or dir == -1 and value < array.get(zigzagvalues, 0)
+        array.shift(zigzagvalues)
+        array.shift(zigzagindexes)
+        array.shift(zigzagdir)
+        add_to_array(value, index, dir)
+
+zigzag(length) =>
+    [dir, ph, pl] = pivots(length)
+    dirchanged = ta.change(dir)
+    if ph or pl
+        add_to_zigzag(dir, dirchanged, ph, pl, bar_index)
+
+calculate_double_pattern() =>
+    doubleTop = false
+    doubleTopConfirmation = 0
+    doubleBottom = false
+    doubleBottomConfirmation = 0
+    if array.size(zigzagvalues) >= 4
+        index = array.get(zigzagindexes, 1)
+        value = array.get(zigzagvalues, 1)
+        highLow = array.get(zigzagdir, 1)
+
+        lindex = array.get(zigzagindexes, 2)
+        lvalue = array.get(zigzagvalues, 2)
+        lhighLow = array.get(zigzagdir, 2)
+
+        llindex = array.get(zigzagindexes, 3)
+        llvalue = array.get(zigzagvalues, 3)
+        llhighLow = array.get(zigzagdir, 3)
+        risk = math.abs(value - llvalue)
+        reward = math.abs(value - lvalue)
+        riskPerReward = risk * 100 / (risk + reward)
+
+        if highLow == 1 and llhighLow == 2 and lhighLow < 0 and riskPerReward < MaxRiskPerReward
+            doubleTop := true
+            doubleTop
+        if highLow == -1 and llhighLow == -2 and lhighLow > 0 and riskPerReward < MaxRiskPerReward
+            doubleBottom := true
+            doubleBottom
+
+        if doubleTop or doubleBottom
+            array.set(doubleTopBottomValues, 0, value)
+            array.set(doubleTopBottomValues, 1, lvalue)
+            array.set(doubleTopBottomValues, 2, llvalue)
+
+            array.set(doubleTopBottomIndexes, 0, index)
+            array.set(doubleTopBottomIndexes, 1, lindex)
+            array.set(doubleTopBottomIndexes, 2, llindex)
+
+            array.set(doubleTopBottomDir, 0, highLow)
+            array.set(doubleTopBottomDir, 1, lhighLow)
+            array.set(doubleTopBottomDir, 2, llhighLow)
+
+    [doubleTop, doubleBottom]
+
+get_crossover_info(doubleTop, doubleBottom) =>
+    index = array.get(doubleTopBottomIndexes, 0)
+    value = array.get(doubleTopBottomValues, 0)
+    highLow = array.get(doubleTopBottomDir, 0)
+
+    lindex = array.get(doubleTopBottomIndexes, 1)
+    lvalue = array.get(doubleTopBottomValues, 1)
+    lhighLow = array.get(doubleTopBottomDir, 1)
+
+    llindex = array.get(doubleTopBottomIndexes, 2)
+    llvalue = array.get(doubleTopBottomValues, 2)
+    llhighLow = array.get(doubleTopBottomDir, 2)
+
+    latestDoubleTop = false
+    latestDoubleBottom = false
+    latestDoubleTop := doubleTop ? true : doubleBottom ? false : latestDoubleTop[1]
+    latestDoubleBottom := doubleBottom ? true : doubleTop ? false : latestDoubleBottom[1]
+
+    doubleTopConfirmation = 0
+    doubleBottomConfirmation = 0
+    doubleTopConfirmation := latestDoubleTop ? ta.crossunder(low, lvalue) ? 1 : ta.crossover(high, llvalue) ? -1 : 0 : 0
+    doubleBottomConfirmation := latestDoubleBottom ? ta.crossover(high, lvalue) ? 1 : ta.crossunder(low, llvalue) ? -1 : 0 : 0
+    [doubleTopConfirmation, doubleBottomConfirmation]
+
+draw_double_pattern(doubleTop, doubleBottom, doubleTopConfirmation, doubleBottomConfirmation) =>
+    index = array.get(doubleTopBottomIndexes, 0)
+    value = array.get(doubleTopBottomValues, 0)
+    highLow = array.get(doubleTopBottomDir, 0)
+
+    lindex = array.get(doubleTopBottomIndexes, 1)
+    lvalue = array.get(doubleTopBottomValues, 1)
+    lhighLow = array.get(doubleTopBottomDir, 1)
+
+    llindex = array.get(doubleTopBottomIndexes, 2)
+    llvalue = array.get(doubleTopBottomValues, 2)
+    llhighLow = array.get(doubleTopBottomDir, 2)
+
+    isBullish = true
+    isBullish := doubleTop or doubleBottom ? doubleTop : isBullish[1]
+
+    risk = math.abs(value - llvalue)
+    reward = math.abs(value - lvalue)
+    riskPerReward = risk * 100 / (risk + reward)
+
+    base =dd? line.new(x1=index, y1=value, x2=llindex, y2=llvalue, color=doubleTop ? bearishColor : bullishColor, width=2, style=line.style_solid):na
+    l1 =dd? line.new(x1=index, y1=value, x2=lindex, y2=lvalue, color=doubleTop ? bearishColor : bullishColor, width=2, style=line.style_dotted):na
+    l2 =dd? line.new(x1=lindex, y1=lvalue, x2=llindex, y2=llvalue, color=doubleTop ? bearishColor : bullishColor, width=2, style=line.style_dotted):na
+    labelText = dd?(doubleTop ? 'Double Top' : 'Double Bottom') + (DisplayRiskPerReward ? ' RR - ' + str.tostring(riskPerReward) : ''):na
+
+    baseLabel = dd?label.new(x=index, y=value, text=labelText, yloc=doubleTop ? yloc.abovebar : yloc.belowbar, color=doubleTop ? bearishColor : bullishColor, style=doubleTop ? label.style_label_down : label.style_label_up, textcolor=textColor, size=size.small):na
+
+    if not(doubleTop or doubleBottom)
+        line.delete(base)
+        line.delete(l1)
+        line.delete(l2)
+        label.delete(baseLabel)
+
+    var doubleTopCount = 0
+    var doubleBottomCount = 0
+    doubleTopCount := doubleTop ? nz(doubleTopCount[1], 0) + 1 : nz(doubleTopCount[1], 0)
+    doubleBottomCount := doubleBottom ? nz(doubleBottomCount[1], 0) + 1 : nz(doubleBottomCount[1], 0)
+
+    if line.get_x2(base) == line.get_x2(base[1])
+        line.delete(base[1])
+        line.delete(l1[1])
+        line.delete(l2[1])
+        label.delete(baseLabel[1])
+        doubleTopCount := doubleTop ? doubleTopCount - 1 : doubleTopCount
+        doubleBottomCount := doubleBottom ? doubleBottomCount - 1 : doubleBottomCount
+        doubleBottomCount
+
+
+    if barstate.islast
+        lres = dd?line.new(x1=bar_index, y1=lvalue, x2=lindex, y2=lvalue, color=isBullish ? bearishColor : bullishColor, width=2, style=line.style_dashed, extend=extend.left):na
+        lsup = dd?line.new(x1=bar_index, y1=llvalue, x2=llindex, y2=llvalue, color=isBullish ? bullishColor : bearishColor, width=2, style=line.style_dashed, extend=extend.left):na
+
+
+    doubleTopConfirmationCount = doubleTopConfirmation > 0 ? 1 : 0
+    doubleBottomConfirmationCount = doubleBottomConfirmation > 0 ? 1 : 0
+    doubleTopInvalidationCount = doubleTopConfirmation < 0 ? 1 : 0
+    doubleBottomInvalidationCount = doubleBottomConfirmation < 0 ? 1 : 0
+
+    if doubleTopConfirmation != 0 or doubleBottomConfirmation != 0
+        if doubleTopConfirmation > 0 or doubleBottomConfirmation > 0
+            lresbreak = dd?line.new(x1=lindex, y1=lvalue, x2=bar_index, y2=lvalue, color=isBullish ? bearishColor : bullishColor, width=2, style=line.style_dashed):na
+            if line.get_x1(lresbreak[1]) == line.get_x1(lresbreak)
+                doubleTopConfirmationCount := 0
+                doubleBottomConfirmationCount := 0
+                doubleTopInvalidationCount := 0
+                doubleBottomInvalidationCount := 0
+                line.delete(lresbreak)
+                lresbreak := lresbreak[1]
+                lresbreak
+        else if doubleTopConfirmation < 0 or doubleBottomConfirmation < 0
+            lsupbreak = dd?line.new(x1=llindex, y1=llvalue, x2=bar_index, y2=llvalue, color=isBullish ? bullishColor : bearishColor, width=2, style=line.style_dashed):na
+            if line.get_x1(lsupbreak[1]) == line.get_x1(lsupbreak)
+                doubleTopInvalidationCount := 0
+                doubleBottomInvalidationCount := 0
+                doubleTopConfirmationCount := 0
+                doubleBottomConfirmationCount := 0
+                line.delete(lsupbreak)
+                lsupbreak := lsupbreak[1]
+                lsupbreak
+    doubleTopConfirmationCount := nz(doubleTopConfirmationCount[1], 0) + doubleTopConfirmationCount
+    doubleBottomConfirmationCount := nz(doubleBottomConfirmationCount[1], 0) + doubleBottomConfirmationCount
+    doubleTopInvalidationCount := nz(doubleTopInvalidationCount[1], 0) + doubleTopInvalidationCount
+    doubleBottomInvalidationCount := nz(doubleBottomInvalidationCount[1], 0) + doubleBottomInvalidationCount
+    [doubleTopCount, doubleBottomCount, doubleTopConfirmationCount, doubleBottomConfirmationCount, doubleTopInvalidationCount, doubleBottomInvalidationCount, lvalue, llvalue, value]
+
+zigzag(length)
+
+[doubleTop, doubleBottom] = calculate_double_pattern()
+[doubleTopConfirmation, doubleBottomConfirmation] = get_crossover_info(doubleTop, doubleBottom)
+[doubleTopCount, doubleBottomCount, doubleTopConfirmationCount, doubleBottomConfirmationCount, doubleTopInvalidationCount, doubleBottomInvalidationCount, lvalue, llvalue, value] = draw_double_pattern(doubleTop, doubleBottom, doubleTopConfirmation, doubleBottomConfirmation)
+
+
+
+if barstate.islast and array.size(zigzagindexes) > 1
+    lastHigh = 0.0
+    lastLow = 0.0
+    for x = 0 to array.size(zigzagindexes) - 1 by 1
+        i = array.size(zigzagindexes) - 1 - x
+        index = array.get(zigzagindexes, i)
+        value = array.get(zigzagvalues, i)
+        highLow = array.get(zigzagdir, i)
+        index_offset = bar_index - index
+
+        labelText = highLow == 2 ? 'HH' : highLow == 1 ? 'LH' : highLow == -1 ? 'HL' : 'LL'
+        labelColor = highLow == 2 ? bullishColor : highLow == 1 ? bullTrapColor : highLow == -1 ? bearTrapColor : bearishColor
+        labelStyle = highLow > 0 ? label.style_label_down : label.style_label_up
+        // labelLocation = highLow > 0? yloc.abovebar : yloc.belowbar
+        labelLocation = yloc.price
+        if showPivots
+            l = label.new(x=index, y=value, text=labelText, xloc=xloc.bar_index, yloc=labelLocation, style=labelStyle, size=size.tiny, color=labelColor, textcolor=textColor)
+            array.unshift(labelArray, l)
+            if array.size(labelArray) > 100
+                label.delete(array.pop(labelArray))
+        if i < array.size(zigzagindexes) - 1 and showZigzag
+            indexLast = array.get(zigzagindexes, i + 1)
+            valueLast = array.get(zigzagvalues, i + 1)
+            l = line.new(x1=index, y1=value, x2=indexLast, y2=valueLast, color=labelColor, width=2, style=line.style_solid)
+
+            array.unshift(lineArray, l)
+            if array.size(lineArray) > 100
+                line.delete(array.pop(lineArray))
+
+///////////////}
+
+//////////////////////////////////////////////////Reversal Zone finder{
+longAlerts = input(title='Trigger Long Alerts', defval=true,group='Reversal Zone finder')
+shortAlerts = input(title='Trigger Short Alerts', defval=true,group='Reversal Zone finder')
+rsiOB = input(title='RSI OverBought Value', defval=70,group='Reversal Zone finder')
+rsiOS = input(title='RSI OverSold Value', defval=30,group='Reversal Zone finder')
+
+// Big candle detector
+lastCandleSize = math.abs(high[1] - low[1])
+curCandleSize = math.abs(high - low)
+
+bullishCandle = curCandleSize > lastCandleSize * 1.5 and close > open
+bearishCandle = curCandleSize > lastCandleSize * 1.5 and close < open
+
+// RSI 
+rsiValue = ta.rsi(close[1], 14)
+
+plotshape(barstate.isconfirmed and bullishCandle and (rsiValue[1] < rsiOS or rsiValue < rsiOS), style=shape.labelup, color=color.new(color.green, 0), location=location.belowbar, textcolor=color.new(color.white, 0), text='RSI Buy', title='RSI Buy')
+plotshape(barstate.isconfirmed and bearishCandle and (rsiValue[1] > rsiOB or rsiValue > rsiOB), style=shape.labeldown, color=color.new(color.red, 0), location=location.abovebar, textcolor=color.new(color.white, 0), text='RSI Sell', title='RSI Sell')
+
+
+alertcondition(barstate.isconfirmed and bullishCandle and (rsiValue[1] < rsiOS or rsiValue < rsiOS),"RSI Buy alert")// style=shape.labelup, color=color.new(color.green, 0), location=location.belowbar, textcolor=color.new(color.white, 0), text='Buy', title='Buy')
+alertcondition(barstate.isconfirmed and bearishCandle and (rsiValue[1] > rsiOB or rsiValue > rsiOB),"RSI Sell alert")// style=shape.labeldown, color=color.new(color.red, 0), location=location.abovebar, textcolor=color.new(color.white, 0), text='Sell', title='Sell')
+
+////////////////////}
+
+//////////////////////////////////////////////////Trend Line{
+srchtr = input(high, 'Highs Source',group="Trend Line")
+srcltr = input(low, 'Lows Source',group="Trend Line")
+mxtr = input.int(300, 'Max Range', minval=2, maxval=300,group="Trend Line")
+nrtr = input.int(0, 'Noise Reduction', minval=0,group="Trend Line")
+smtr = nrtr + 1
+
+SRCHtr = ta.ema(srchtr, smtr)
+SRCLtr = ta.ema(srcltr, smtr)
+
+gaptr = 2
+if barstate.islast
+    if mxtr > bar_index - gaptr
+        mxtr := bar_index - gaptr
+        mxtr
+
+hhhtr = 0.0
+llltr = 1000000000000.0
+
+h2tr = hhhtr
+th2tr = 0
+l2tr = llltr
+tl2tr = 0
+h1tr = hhhtr
+th1tr = 0
+l1tr = llltr
+tl1tr = 0
+for i = mxtr + gaptr to gaptr by 1
+    // find farthest high
+    h1tr := math.max(h1tr, SRCHtr[i])
+    if h1tr == SRCHtr[i]
+        th1tr := i
+        th1tr
+    // find farthest low
+    l1tr := math.min(l1tr, SRCLtr[i])
+    if l1tr == SRCLtr[i]
+        tl1tr := i
+        tl1tr
+
+for i = mxtr + gaptr to gaptr by 1
+    if i < math.min(tl1tr, th1tr / 2)  // find closest high
+        h2tr := math.max(h2tr, SRCHtr[i])
+        if h2tr == SRCHtr[i]
+            th2tr := i
+            th2tr
+    if i < math.min(th1tr, tl1tr / 2)  // find closest low
+        l2tr := math.min(l2tr, SRCLtr[i])
+        if l2tr == SRCLtr[i]
+            tl2tr := i
+            tl2tr
+
+if th1tr <= gaptr
+    h1tr := hhhtr
+    th1tr := 0
+    for i = mxtr + gaptr to math.round(mxtr / 1.4669) + gaptr by 1
+        // find closest high
+        h1tr := math.max(h1tr, SRCHtr[i])
+        if h1tr == SRCHtr[i]
+            th1tr := i
+            th1tr
+if tl1tr <= gaptr
+    l1tr := llltr
+    tl1tr := 0
+    for i = mxtr + gaptr to math.round(mxtr / 1.4669) + gaptr by 1
+        // find closest low
+        l1tr := math.min(l1tr, SRCLtr[i])
+        if l1tr == SRCLtr[i]
+            tl1tr := i
+            tl1tr
+
+if th2tr <= gaptr
+    h2tr := hhhtr
+    th2tr := 0
+    for i = gaptr to math.round(mxtr / 2.9338) + gaptr by 1
+        // find closest high
+        h2tr := math.max(h2tr, SRCHtr[i])
+        if h2tr == SRCHtr[i]
+            th2tr := i
+            th2tr
+if tl2tr <= gaptr
+    l2tr := llltr
+    tl2tr := 0
+    for i = gaptr to math.round(mxtr / 2.9338) + gaptr by 1
+        // find closest low
+        l2tr := math.min(l2tr, SRCLtr[i])
+        if l2tr == SRCLtr[i]
+            tl2tr := i
+            tl2tr
+
+a1tr = math.avg(h1tr, l1tr)
+ta1tr = math.round(math.avg(th1tr, tl1tr))
+a2tr = math.avg(h2tr, l2tr)
+ta2tr = math.round(math.avg(th2tr, tl2tr))
+
+PLT(P1, P2, T1, T2) =>
+    if exptr
+        t = T1 - T2
+        slope = (math.log10(P1) - math.log10(P2)) / (0 - t)
+        y = slope * T1 + math.log10(P1)
+        math.pow(10, y)
+    else
+        (P2 - P1) / (T1 - T2) * T1 + P1
+
+
+PLCtr = barstate.islast or tltr
+
+PLThtr = PLCtr ? PLT(h1tr, h2tr, th1tr, th2tr) : na
+PLTltr = PLCtr ? PLT(l1tr, l2tr, tl1tr, tl2tr) : na
+PLTatr = PLCtr ? PLT(a1tr, a2tr, ta1tr, ta2tr) : na
+
+stytr = tltr ? plot.style_stepline : plot.style_circles
+lintr = tltr ? 1 : 2
+
+plot(PLThtr, 'Res (Trend Line)', color=color.new(#ff0088, 0), style=stytr, linewidth=lintr)
+//plot(PLTatr, 'Avg (Trend Line)', color=color.new(#ffff00, 0), style=stytr, linewidth=lintr)
+plot(PLTltr, 'Sup (Trend Line)', color=color.new(#00ff88, 0), style=stytr, linewidth=lintr)
+
+bgcolor(close > PLThtr ? color.new(#ff0088, 95) : color.new(#ff0088, 100), title='Close over Resistance (Trend Line)', transp=90)
+bgcolor(close < PLTltr ? color.new(#00ff88, 95) : color.new(#00ff88, 100), title='Close under Support (Trend Line)', transp=90)
+
+L(T1, H1, T2, H2, CLR, W, X) =>
+    line.new(bar_index - math.max(T1, 0), H1, bar_index - math.max(T2, 0), H2, color=CLR, width=W, extend=X ? extend.both : extend.none)
+
+if srtr
+    L1btr = L(th1tr, h1tr, th2tr, h2tr, #ff0088, 1, true)
+    line.delete(L1btr[1])
+    if rltr
+        L1atr = L(th1tr, h1tr, th2tr, h2tr, #ff0088, 3, false)
+        line.delete(L1atr[1])
+if sstr
+    L2btr = L(tl1tr, l1tr, tl2tr, l2tr, #00ff88, 1, true)
+    line.delete(L2btr[1])
+    if rltr
+        L2atr = L(tl1tr, l1tr, tl2tr, l2tr, #00ff88, 3, false)
+        line.delete(L2atr[1])
+if satr
+    L3btr = L(ta1tr, a1tr, ta2tr, a2tr, #ffff00, 1, true)
+    line.delete(L3btr[1])
+    if rltr
+        L3atr = L(ta1tr, a1tr, ta2tr, a2tr, #ffff00, 3, false)
+        line.delete(L3atr[1])
+if crtr
+    L4btr = L(th1tr, h1tr, tl2tr, l2tr, #cccccc, 1, false)
+    line.delete(L4btr[1])
+    L5btr = L(tl1tr, l1tr, th2tr, h2tr, #cccccc, 1, false)
+    line.delete(L5btr[1])
+
+//}
+// credits to the community pinescript developers 
+// for some part of my script I used open source scripts by 
+// @guikroth (Range Filter Buy and Sell 5min)
+// @HeWhoMustNotBeNamed (Double Top/Bottom - Ultimate (OS))
+// @Daveatt (Triangular Moving Average (TMA) bands)
+// @nickbarcomb (Trend Lines 2.0)
+// @LonesomeTheBlue (Support Resistance MTF)
+// The strategy author @miladhamid
+
+
+
+
